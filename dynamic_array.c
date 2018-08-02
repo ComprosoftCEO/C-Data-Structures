@@ -7,13 +7,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-//arr should be a pDynamic_Arr_t object
+//arr should be a pDynamic_Obj_t object
 #define ResAddr(arr,index) ((void*) (((char*) (arr)->ptr) + ((index) * (arr)->el_size)))
+
+
+// Private Dynamic Array object
+typedef struct {
+    void* ptr;      // Internal string buffer
+    size_t el_size; // How big is each element
+    size_t index;   // Where to insert the next character
+    size_t len;     // Absolute string length (with null-terminator)
+    size_t max;     // Biggest index used (DO NOT MESS WITH THIS!!!)
+} Dynamic_Obj_t, *pDynamic_Obj_t;
 
 
 pDynamic_Arr_t new_dynamic_array(size_t el_size) {
     if (el_size == 0) {return NULL;}
-    pDynamic_Arr_t arr = malloc(sizeof(Dynamic_Arr_t));
+    pDynamic_Obj_t arr = malloc(sizeof(Dynamic_Obj_t));
 
     if (!arr) {return NULL;}
 
@@ -21,10 +31,13 @@ pDynamic_Arr_t new_dynamic_array(size_t el_size) {
     arr->index = 0;
     arr->ptr = NULL;
 
-    return arr;
+    return (pDynamic_Arr_t) arr;
 }
 
-void free_dynamic_array(pDynamic_Arr_t arr, Free_Func_t func) {
+
+void free_dynamic_array(pDynamic_Arr_t a, Free_Func_t func) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
     if (!arr) {return;}
 
     if (func != NULL) {
@@ -38,9 +51,14 @@ void free_dynamic_array(pDynamic_Arr_t arr, Free_Func_t func) {
     free(arr);
 }
 
-void add_array_element(pDynamic_Arr_t arr,const void* new) {
-    if (!arr) {return;}
-    if (!new) {return;}
+
+
+
+
+bool add_array_element(pDynamic_Arr_t a,const void* new) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
+    if (!(arr && new)) {return false;}
 
     if (arr->ptr == NULL) {
         arr->index = 0;
@@ -49,55 +67,58 @@ void add_array_element(pDynamic_Arr_t arr,const void* new) {
         arr->ptr = malloc(arr->len * arr->el_size);
     }
 
-    if (!arr->ptr) {return;}
+    if (!arr->ptr) {return false;}
 
-    //You can have a NULL buffer going into this function
     if (arr->index >= arr->len) {
+		void* new_ptr = realloc(arr->ptr, (arr->len+16) * arr->el_size);
+		if (!new_ptr) {return false;}
+
         arr->len+=16;
-        arr->ptr = realloc(arr->ptr,arr->len * arr->el_size);
-        if (!arr->ptr) {return;}
+        arr->ptr = new_ptr;
     }
 
 
-    //Cast to a char* to do pointer arithmetic
-    void* index = (void*) (((char*) arr->ptr)+ (arr->index * arr->el_size));
-
-    memcpy(index,new,arr->el_size);
+    memcpy(ResAddr(arr,arr->index),new,arr->el_size);
 
     arr->index+=1;
     if (arr->index > arr->max) {arr->max = arr->index;}
+	return true;
 }
 
 
-void add_array_elements(pDynamic_Arr_t arr, const void* new_arr, size_t count) {
-    if (!arr) {return;}
-    if (!new_arr) {return;}
+bool add_array_elements(pDynamic_Arr_t a, const void* new_arr, size_t count) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
+	if (!(a && new_arr)) {return false;}
 
     size_t i;
     for (i = 0; i < count; ++i) {
-        void* next = (void*) (((char*) new_arr) + (i * arr->el_size));
-        add_array_element(arr,next);
+		void* next = (void*) (((char*) new_arr) + (i * arr->el_size));
+		if (!add_array_element(arr,next)) {return false;}
     }
+
+	return true;
 }
 
-void add_array_elements_p(pDynamic_Arr_t arr, const void** new_ptrs, size_t count) {
-    if (!arr) {return;}
-    if (!new_ptrs) {return;}
+bool add_array_elements_p(pDynamic_Arr_t a, const void** new_ptrs, size_t count) {
+
+    if (!(a && new_ptrs)) {return false;}
 
     size_t i;
     for (i = 0; i < count; ++i) {
-        add_array_element(arr,new_ptrs[i]);
+        if (!add_array_element(a,new_ptrs[i])) {return false;}
     }
 
-
+	return true;
 }
 
 
 
-void delete_array_element(pDynamic_Arr_t arr, size_t index, bool maintainOrder) {
+bool delete_array_element(pDynamic_Arr_t a, size_t index, bool maintainOrder) {
 
-	if (!arr) {return;}
-	if (index >= arr->len) {return;}
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
+	if (!arr) {return false;}
+	if (index >= arr->len) {return false;}
 	
 	arr->max-=1;
 	if (maintainOrder) {
@@ -108,31 +129,43 @@ void delete_array_element(pDynamic_Arr_t arr, size_t index, bool maintainOrder) 
 		//Move the last element into the space (does not overlap)
 		memcpy(ResAddr(arr,arr->max), ResAddr(arr,index), arr->el_size);
 	}
+
+	return true;
 }
 
 
-void set_array_index(pDynamic_Arr_t arr, size_t index) {
-    if (!arr) {return;}
-    if (index >= arr->len) {return;}
+bool set_array_index(pDynamic_Arr_t a, size_t index) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
+    if (!arr) {return false;}
+    if (index >= arr->len) {return false;}
     arr->index = index;
+
+	return true;
 }
 
-void* get_array_element(pDynamic_Arr_t arr, size_t index) {
+void* get_array_element(pDynamic_Arr_t a, size_t index) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
     if (!arr) {return NULL;}
     if (index >= arr->len) {return NULL;}
 
-    //Cast to a char* to do pointer arithmetic
-    return (void*) (((char*) arr->ptr)+ (index * arr->el_size));
+    return ResAddr(arr,index); 
 }
 
 //Return NULL on error or an empty array
-void* flush_dynamic_array(pDynamic_Arr_t arr) {
+void* flush_dynamic_array(pDynamic_Arr_t a) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
     if (!arr) {return NULL;}
 
     //Resize array to match the max size
     void* ret = NULL;
     if (arr->max == 0) {if (arr->ptr) {free(arr->ptr);} ret = NULL;}
-    else {ret = realloc(arr->ptr,arr->max * arr->el_size);}
+    else {
+		ret = realloc(arr->ptr,arr->max * arr->el_size);
+		if (!ret) {return NULL; /* Realloc Failure (not good!) */}
+	}
 
     arr->index = 0;
     arr->max = 0;
@@ -143,7 +176,9 @@ void* flush_dynamic_array(pDynamic_Arr_t arr) {
 }
 
 //How many items are in this array???
-size_t get_array_count(pDynamic_Arr_t arr) {
+size_t get_array_count(pDynamic_Arr_t a) {
+
+	pDynamic_Obj_t arr = (pDynamic_Obj_t) a;
     if (!arr) {return 0;}
     if (arr->ptr == NULL) {return 0;}
     return (arr->max);
