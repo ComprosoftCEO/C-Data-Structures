@@ -4,7 +4,7 @@ A variety of useful C data structures to aid in future projects:
 * __[Dynamic Linked-List Array](#dynamic-linked-list-array)__ 
 * __[XML Object](#xml-object)__
 
-_More to come soon..._
+_More to come in the future..._
 
 <br>
 
@@ -36,3 +36,5 @@ anything. Each item in the array can be a different size.
 * Code file: *xml.c*
 
 Allows you to create and manipulate an XML structure in memory using a series of function calls.
+
+_Note: This object is still needs some work..._
