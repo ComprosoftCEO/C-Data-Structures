@@ -37,4 +37,4 @@ anything. Each item in the array can be a different size.
 
 Allows you to create and manipulate an XML structure in memory using a series of function calls.
 
-_Note: This object is still needs some work..._
+_Note: This object still needs some work..._
