@@ -1,17 +1,47 @@
-// C Data Structures
-// (C) Comprosoft 2018 - All Rights Reserved
-//
-//	xml.c - Implementation of a general-purpose XML structure type
-//
-#include "xml.h"
+// General-purpose XML utility
+#include <xml.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
-//************************Private Functions***************************
-#define INITIAL_SIZE  16
-#define INCREASE_SIZE 16
 
+//Dynamic array buffer structure type
+typedef struct {
+	size_t inuse;			// Number of items that I am currently using
+	size_t alloc;			// Number of total items available
+	void** arr;				// Array of pointers
+
+	size_t* updateLen;		// Public integer length to update
+	void*** updateArr;		// Public array pointer to update
+} BUFFER_t, *pBUFFER_t;
+
+
+
+//Private XML node ([P]rivate [Node], or PNODE)
+typedef struct XML_PNODE_t {
+	char* name;							// Name of the tag	
+	char* value;						// Test inside the tag
+	struct XML_PNODE_t* parent;			// Who owns me?
+	
+	size_t num_attrib;					// Number of attributes I own
+	pXML_ATTRIB_t* attrib;				// Array of attributes
+
+	size_t num_children;				// Number of children I own
+	struct XML_PNODE_t** children;		// Array of children
+
+//------------Private Variables--------------
+
+	BUFFER_t attrib_buffer;				// For creating a list of attributes
+	BUFFER_t child_buffer;				// For creating a list of children
+} XML_PNODE_t, *pXML_PNODE_t;
+
+
+
+
+
+
+//************************Other Functions***************************
 
 static inline char* dupstr(const char* input) {
 	if (!input) {return NULL;}
@@ -23,14 +53,42 @@ static inline char* dupstr(const char* input) {
 }
 
 
-static inline void set_string(char** ptr, char* string, int copy) {
+static inline void set_string(char** ptr, char* string, bool copy) {
 	if (*ptr) {free(*ptr);}
 	if (copy) {*ptr = dupstr(string);}
 	else {*ptr = string;}
 }
 
 
-static inline void insert_buffer(pBUFFER_t buf, void* ptr) {	
+
+
+//************************Buffer Functions***************************
+
+//Update the updateXXX variables inside buf
+static inline void buffer_update(pBUFFER_t buf) {
+	if (buf->updateLen) {*buf->updateLen = buf->inuse;}
+	if (buf->updateArr) {*buf->updateArr = buf->arr;}	
+}
+
+
+static inline void copy_buffer_size(pBUFFER_t from, pBUFFER_t to) {
+	if (to->arr) {free(to->arr);}
+	
+	to->inuse = from->inuse;
+	to->alloc = from->alloc;
+	to->arr = (void**) calloc(to->alloc,sizeof(void*));
+
+	//memcpy(to->arr,from->arr,sizeof(void*) * to->inuse);
+	buffer_update(to);
+}
+
+
+
+
+#define INITIAL_SIZE  16
+#define INCREASE_SIZE 16
+
+static inline void insert_buffer(pBUFFER_t buf, void* ptr) {
 	if (!(buf->arr)) {		//Initial Allocation
 		buf->alloc = INITIAL_SIZE;
 		buf->arr = (void **) calloc(buf->alloc,sizeof(void*));
@@ -42,24 +100,36 @@ static inline void insert_buffer(pBUFFER_t buf, void* ptr) {
 		buf->alloc+=INCREASE_SIZE;
 		buf->arr = (void**) realloc(buf->arr,(buf->alloc) * sizeof(void*));
 	}
+
+	buffer_update(buf);
 }
 
 
+
+static inline void free_buffer(pBUFFER_t buf) {
+	if (buf->arr) {free(buf->arr); buf->arr = NULL;}
+	buf->inuse = buf->alloc = 0;
+	buffer_update(buf);
+}
 
 
 //************************XML Attributes***************************
 
 pXML_ATTRIB_t new_xml_attrib() {
-	return (pXML_ATTRIB_t) calloc(1,sizeof(XML_ATTRIB_t));
+	pXML_ATTRIB_t attr = (pXML_ATTRIB_t) calloc(1,sizeof(XML_ATTRIB_t));
+
+	//Default name and value strings
+	attr->name = dupstr("NAME");
+	attr->value = dupstr("VALUE");
+	return attr;
 }
 
 pXML_ATTRIB_t duplicate_xml_attrib(pXML_ATTRIB_t attr) {
 	pXML_ATTRIB_t new = new_xml_attrib();
 
-	if (attr->name) {new->name = dupstr(attr->name);}
-	if (attr->value) {new->value = dupstr(attr->value);}
-
-	return attr;
+	if (attr->name) {xml_attrib_set_name(new,attr->name,true);}
+	if (attr->value) {xml_attrib_set_value(new,attr->value,true);}
+	return new;
 }
 
 void free_xml_attrib(pXML_ATTRIB_t attr) {
@@ -68,11 +138,11 @@ void free_xml_attrib(pXML_ATTRIB_t attr) {
 	free(attr);
 }
 
-void xml_attrib_set_name(pXML_ATTRIB_t attr, char* name, int copy) {
+void xml_attrib_set_name(pXML_ATTRIB_t attr, char* name, bool copy) {
 	set_string(&attr->name,name,copy);
 }
 
-void xml_attrib_set_value(pXML_ATTRIB_t attr, char* value, int copy) {
+void xml_attrib_set_value(pXML_ATTRIB_t attr, char* value, bool copy) {
 	set_string(&attr->value,value,copy);
 }
 
@@ -84,92 +154,143 @@ void xml_attrib_set_value(pXML_ATTRIB_t attr, char* value, int copy) {
 //************************XML Nodes***************************
 
 pXML_NODE_t new_xml_node() {
-	return (pXML_NODE_t) calloc(1,sizeof(XML_NODE_t));
+	pXML_PNODE_t node = calloc(1,sizeof(XML_PNODE_t));
+
+	//Default Values
+	node->name = dupstr("NAME");
+	node->value = dupstr("VALUE");
+
+	//Update Buffer Pointers
+	node->attrib_buffer.updateLen = &node->num_attrib;
+	node->attrib_buffer.updateArr = (void***) &node->attrib;
+	node->child_buffer.updateLen = &node->num_children;
+	node->child_buffer.updateArr = (void***) &node->children;
+
+	return (pXML_NODE_t) node;
 }
 
-pXML_NODE_t duplicate_xml_node(pXML_NODE_t node) {
-	pXML_NODE_t new = new_xml_node();	
 
-	//Blank copy of everything, then duplicate later
-	*new = *node;
+pXML_NODE_t duplicate_xml_node(pXML_NODE_t n) {
 
-	if (node->name) {new->name = dupstr(node->name);}
-	if (node->value) {new->value = dupstr(node->value);}
+	pXML_PNODE_t node = (pXML_PNODE_t) n;
+	pXML_PNODE_t new = (pXML_PNODE_t) new_xml_node();	
 
-	if (node->attrib)   {new->attrib = calloc(node->allocated_attrib,sizeof(void**));}
-	if (node->children) {new->children = calloc(node->allocated_children,sizeof(void**));}
+	if (node->name) {xml_set_name((pXML_NODE_t) new,node->name,true);}
+	if (node->value) {xml_set_value((pXML_NODE_t) new,node->value,true);}
 
-	new->a = duplicate_string(&node->a);
-	new->e = duplicate_string(&node->e);
+	//Note: Copy buffer updates num_attrib, attrib, num_children, and children
+	copy_buffer_size(&node->attrib_buffer,&new->attrib_buffer);
+	copy_buffer_size(&node->child_buffer,&new->child_buffer);
 
-	int i;
+	//Copy attrbutes
+	size_t i;
 	for (i = 0; i < node->num_attrib; ++i) {
 		new->attrib[i] = duplicate_xml_attrib(node->attrib[i]);
 	}
 
+	//Copy children
 	for (i = 0; i < node->num_children; ++i) {
-		new->children[i] = duplicate_xml_node(node->children[i]);
+		new->children[i] = (pXML_PNODE_t) duplicate_xml_node((pXML_NODE_t) node->children[i]);
 	}
 
-	return new;
+	return (pXML_NODE_t) new;
 }
 
 
 
 
 //Does this recursively
-void free_xml_node(pXML_NODE_t node) {
-	int i;
+void free_xml_node(pXML_NODE_t n) {
+	size_t i;
+	pXML_PNODE_t node = (pXML_PNODE_t) n;
 
+	//Free attributes
 	for (i = 0; i < node->num_attrib; ++i) {
 		free_xml_attrib(node->attrib[i]);
 	}
 
+	//Free children
 	for (i = 0; i < node->num_children; ++i) {
-		free_xml_node(node->children[i]);
+		free_xml_node((pXML_NODE_t) node->children[i]);
 	}
 
-	if (node->attrib)   {free(node->attrib);}
-	if (node->children) {free(node->children);}
-
+	free_buffer(&node->attrib_buffer);
+	free_buffer(&node->child_buffer);
+	
 	if (node->name) {free(node->name);}
 	if (node->value) {free(node->value);}
 
-	free_string(&node->a);
-	free_string(&node->e);
 	free(node);
 }
 
 
 
-void xml_set_name(pXML_NODE_t node, char* name, int copy) {
-	set_string(&node->name,name,copy);
+void xml_set_name(pXML_NODE_t node, char* name, bool copy) {
+	set_string(&((pXML_PNODE_t)node)->name,name,copy);
 }
 
-void xml_set_value(pXML_NODE_t node, char* value, int copy) {
-	set_string(&node->value,value,copy);
+void xml_set_value(pXML_NODE_t node, char* value, bool copy) {
+	set_string(&((pXML_PNODE_t)node)->value,value,copy);
 }
 
 
-void xml_add_attribute(pXML_NODE_t node, pXML_ATTRIB_t attr, int copy) {
+void xml_add_attrib(pXML_NODE_t n, pXML_ATTRIB_t attr, bool copy) {
+	pXML_PNODE_t node = (pXML_PNODE_t) n;
 	if (copy) {
-		insert_buffer((pBUFFER_t) &node->num_attrib,duplicate_xml_attrib(attr));
+		insert_buffer(&node->attrib_buffer,duplicate_xml_attrib(attr));
 	} else {
-		insert_buffer((pBUFFER_t) &node->num_attrib,attr);
+		insert_buffer(&node->attrib_buffer,attr);
 	}
 }
 
-void xml_add_child_node(pXML_NODE_t node, pXML_NODE_t n, int copy) {
-	n->parent = node;	/* Hope this line doesn't break something... */
+void xml_add_child_node(pXML_NODE_t n, pXML_NODE_t child, bool copy) {
+	pXML_PNODE_t node = (pXML_PNODE_t) n;
+	((pXML_PNODE_t)child)->parent = node;
 	if (copy) {	
-		insert_buffer((pBUFFER_t) &node->num_children,duplicate_xml_node(n));
+		insert_buffer(&node->child_buffer,duplicate_xml_node(child));
 	} else {
-		insert_buffer((pBUFFER_t) &node->num_children,n);
+		insert_buffer(&node->child_buffer,child);
 	}	
 }
 
-static void xml_print_recurse(pXML_NODE_t node, int level) {
-	int i;
+
+
+
+//************************Print and Debug***************************
+
+
+
+// Similar to printf, but concatenates the string
+//	Automatically resizes buf to accomidate the new string
+//
+// Returns NULL on failure
+static char* sprintf_cat(char* buf, const char* format, ...) {
+	
+	va_list vl;
+	va_start(vl,format);
+	
+	//Get the number of characters to append to the buffer
+	int chars = vsnprintf(NULL,0,format,vl);
+	if (chars < 0) {return NULL; /* Print Error */}
+
+	//Figure out the new length needed for the String buffer
+	size_t curLen = ((buf != NULL) ? strlen(buf) : 0);
+	size_t newLen = curLen+chars+1;		//Don't forget null terminator
+
+	//Resize the buffer to match the new size
+	void* newBuf = realloc(buf, curLen+chars+1);
+	if (!newBuf) {return NULL; /* Realloc Error */}
+	
+	//Print the string and return
+	vsnprintf(newBuf,newLen,format,vl);
+	va_end(vl);
+	return newBuf;
+}
+
+
+
+static void xml_print_recurse(pXML_NODE_t node, size_t level) {
+	size_t i;
 
 	for (i = 0; i < level; ++i) {printf("  ");}
 	printf("<%s",node->name);
@@ -193,70 +314,52 @@ static void xml_print_recurse(pXML_NODE_t node, int level) {
 	printf("</%s>\n",node->name);
 }
 
-void xml_print_node(pXML_NODE_t node) {xml_print_recurse(node,0);}
+void xml_print_node(pXML_NODE_t node) {
+	xml_print_recurse(node,0);
+}
 
 
 
 
+//Super useful macro for updating buffer, and testing for when to free
+#define update_buf(buf,func,...) {\
+	char* temp = func(__VA_ARGS__); \
+	if (!temp) {free(buf); return NULL;} \
+	buf = temp; }
 
+#define sprintf_c(buf,format,...) update_buf(buf,sprintf_cat,buf,format,##__VA_ARGS__)
 
-//************************String Concatenation***************************
+static char* xml_to_string_recurse(pXML_NODE_t node, size_t level, char* buf) {
 
+	size_t i;
 
-//Remove Non-Ascii characters
-static inline void filter(char* input) {
-	char* temp = input;
-	for(;(*input) != 0; ++input) {
-		if ((*input > 31) && (*input < 127)) {
-			*(temp++) = *input;
+	for (i = 0; i < level; ++i) {sprintf_c(buf,"  ");}
+	sprintf_c(buf,"<%s",node->name);
+	
+	for (i = 0; i < node->num_attrib; ++i) {
+		pXML_ATTRIB_t attr = node->attrib[i];
+		sprintf_c(buf," %s=\"%s\"",attr->name,attr->value);
+	}
+
+	sprintf_c(buf,">%s",node->value);
+	if (node->num_children > 0) {
+		sprintf_c(buf,"\n");
+
+		for (i = 0; i < node->num_children; ++i) {
+			update_buf(buf,xml_to_string_recurse,
+				node->children[i],level+1,buf
+			);
 		}
-	}
-	*temp = 0;
-}
 
-
-void concat_string(pCONCAT_STR_t a, char* str, int doFilter) {
-	if (!a->buf) {
-		a->len = INITIAL_SIZE;
-		a->buf = (char*) calloc(a->len+1,sizeof(char));
+		for (i = 0; i < level; ++i) {sprintf_c(buf,"  ");}
 	}
 
-	if (doFilter) {filter(str);}
-	if ((strlen(a->buf) + strlen(str)) > a->len) {
-		a->len+=INCREASE_SIZE;
-		a->buf = realloc(a->buf,(size_t) (a->len+1) * sizeof(char));
-		a->buf[a->len] = 0;
-	}
-
-	strncat(a->buf,str,a->len);
-	a->buf[strlen(a->buf)] = 0;
-}
-
-
-char* flush_con_string(pCONCAT_STR_t a) {
-	char* buf;
-	if (!a->buf) {buf = (char*) calloc(1,sizeof(char));}
-	else {buf = realloc(a->buf,(strlen(a->buf)+1)*sizeof(char));}
-
-	a->buf = NULL;
-	a->len = 0;
+	sprintf_c(buf,"</%s>\n",node->name);
 	return buf;
 }
 
 
-CONCAT_STR_t duplicate_string(pCONCAT_STR_t a) {
-	CONCAT_STR_t ret = *a;	
-
-	if (a->buf) {
-		ret.buf = (char*) calloc(a->len+1,sizeof(char));
-		memcpy(ret.buf,a->buf,a->len);
-	}
-
-	return ret;
+char* xml_to_string(pXML_NODE_t node) {
+	return xml_to_string_recurse(node,0,NULL);
 }
 
-
-void free_string(pCONCAT_STR_t a) {
-	if (a->buf) {free(a->buf);}
-	a->len = 0;
-}
