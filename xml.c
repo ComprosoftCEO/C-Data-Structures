@@ -1,5 +1,5 @@
 // General-purpose XML utility
-#include <xml.h>
+#include "xml.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -263,15 +263,17 @@ void xml_add_child_node(pXML_NODE_t n, pXML_NODE_t child, bool copy) {
 // Similar to printf, but concatenates the string
 //	Automatically resizes buf to accomidate the new string
 //
-// Returns NULL on failure
-static char* sprintf_cat(char* buf, const char* format, ...) {
+// Upon failure, returns false and frees the buffer
+static bool sprintf_cat(char** pBuf, const char* format, ...) {
 	
 	va_list vl;
-	va_start(vl,format);
-	
+	char* buf = *pBuf;
+
 	//Get the number of characters to append to the buffer
+	va_start(vl,format);
 	int chars = vsnprintf(NULL,0,format,vl);
-	if (chars < 0) {return NULL; /* Print Error */}
+	va_end(vl);
+	if (chars < 0) {return free(buf), false; /* Print Error */}
 
 	//Figure out the new length needed for the String buffer
 	size_t curLen = ((buf != NULL) ? strlen(buf) : 0);
@@ -279,12 +281,16 @@ static char* sprintf_cat(char* buf, const char* format, ...) {
 
 	//Resize the buffer to match the new size
 	void* newBuf = realloc(buf, curLen+chars+1);
-	if (!newBuf) {return NULL; /* Realloc Error */}
+	if (!newBuf) {return free(buf), false; /* Realloc Error */}
 	
-	//Print the string and return
-	vsnprintf(newBuf,newLen,format,vl);
+	//Print the string
+	va_start(vl,format);
+	vsnprintf(newBuf+curLen,newLen-curLen,format,vl);
 	va_end(vl);
-	return newBuf;
+
+	//Update the buffer
+	*pBuf = newBuf;
+	return true;
 }
 
 
@@ -320,46 +326,42 @@ void xml_print_node(pXML_NODE_t node) {
 
 
 
+//Just like sprintf_cat, but returns false on failure
+//	This makes the code slightly more ledgible
+#define sprintf_c(pBuf,format,...) if (!sprintf_cat((pBuf),(format),##__VA_ARGS__)) {return false;}
 
-//Super useful macro for updating buffer, and testing for when to free
-#define update_buf(buf,func,...) {\
-	char* temp = func(__VA_ARGS__); \
-	if (!temp) {free(buf); return NULL;} \
-	buf = temp; }
-
-#define sprintf_c(buf,format,...) update_buf(buf,sprintf_cat,buf,format,##__VA_ARGS__)
-
-static char* xml_to_string_recurse(pXML_NODE_t node, size_t level, char* buf) {
+static bool xml_to_string_recurse(pXML_NODE_t node, size_t level, char** pBuf) {
 
 	size_t i;
 
-	for (i = 0; i < level; ++i) {sprintf_c(buf,"  ");}
-	sprintf_c(buf,"<%s",node->name);
+	for (i = 0; i < level; ++i) {sprintf_c(pBuf,"  ");}
+	sprintf_c(pBuf,"<%s",node->name);
 	
 	for (i = 0; i < node->num_attrib; ++i) {
 		pXML_ATTRIB_t attr = node->attrib[i];
-		sprintf_c(buf," %s=\"%s\"",attr->name,attr->value);
+		sprintf_c(pBuf," %s=\"%s\"",attr->name,attr->value);
 	}
 
-	sprintf_c(buf,">%s",node->value);
+	sprintf_c(pBuf,">%s",node->value);
 	if (node->num_children > 0) {
-		sprintf_c(buf,"\n");
+		sprintf_c(pBuf,"\n");
 
 		for (i = 0; i < node->num_children; ++i) {
-			update_buf(buf,xml_to_string_recurse,
-				node->children[i],level+1,buf
-			);
+			if (!xml_to_string_recurse(node->children[i],level+1,pBuf)) {
+				return false;
+			}
 		}
 
-		for (i = 0; i < level; ++i) {sprintf_c(buf,"  ");}
+		for (i = 0; i < level; ++i) {sprintf_c(pBuf,"  ");}
 	}
 
-	sprintf_c(buf,"</%s>\n",node->name);
-	return buf;
+	sprintf_c(pBuf,"</%s>\n",node->name);
+	return true;
 }
 
 
 char* xml_to_string(pXML_NODE_t node) {
-	return xml_to_string_recurse(node,0,NULL);
+	char* buf = NULL;
+	xml_to_string_recurse(node,0,&buf);
+	return buf;
 }
-
